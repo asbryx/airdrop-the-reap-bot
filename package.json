@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "description": "Standalone farming bot for The Reap (play.thereap.xyz)",
   "main": "reap-bot.js",
+  "private": true,
   "scripts": {
-    "start": "node reap-bot.js"
+    "start": "node reap-bot.js",
+    "check": "node --check reap-bot.js"
   },
   "dependencies": {}
 }

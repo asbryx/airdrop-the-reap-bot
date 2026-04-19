@@ -10,9 +10,103 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
+function readEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const text = fs.readFileSync(filePath, 'utf8');
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    let value = match[2] || '';
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function parseJsonEnv(name, fallback = null) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${name}: ${error.message}`);
+  }
+}
+
+function parseNumberEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid number in ${name}: ${raw}`);
+  }
+  return value;
+}
+
+function parseBooleanEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  if (/^(true|1|yes|on)$/i.test(raw)) return true;
+  if (/^(false|0|no|off)$/i.test(raw)) return false;
+  throw new Error(`Invalid boolean in ${name}: ${raw}`);
+}
+
+function parseMaybeJson(value, label) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${label}: ${error.message}`);
+  }
+}
+
+function normalizeEnvAuth(prefix = 'REAP_') {
+  const accessToken = process.env[`${prefix}ACCESS_TOKEN`] || '';
+  const refreshToken = process.env[`${prefix}REFRESH_TOKEN`] || '';
+  const userId = process.env[`${prefix}USER_ID`] || '';
+  const userJson = process.env[`${prefix}USER_JSON`] || '';
+  const accountsJson = process.env[`${prefix}ACCOUNTS_JSON`] || '';
+
+  if (accountsJson) {
+    const accounts = parseMaybeJson(accountsJson, `${prefix}ACCOUNTS_JSON`);
+    if (!Array.isArray(accounts) || !accounts.length) {
+      throw new Error(`${prefix}ACCOUNTS_JSON must be a non-empty JSON array.`);
+    }
+    return { accounts };
+  }
+
+  if (!accessToken && !refreshToken && !userId && !userJson) return null;
+  if (!accessToken || !refreshToken) {
+    throw new Error(`${prefix}ACCESS_TOKEN and ${prefix}REFRESH_TOKEN are both required when using env auth.`);
+  }
+
+  const user = userJson
+    ? parseMaybeJson(userJson, `${prefix}USER_JSON`)
+    : { id: userId || '' };
+
+  return {
+    auth: {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: process.env[`${prefix}TOKEN_TYPE`] || 'bearer',
+      expires_in: parseNumberEnv(`${prefix}EXPIRES_IN`) || 3600,
+      expires_at: parseNumberEnv(`${prefix}EXPIRES_AT`) || 0,
+      user,
+    },
+  };
+}
+
 // ─── Paths ───────────────────────────────────────────────
+const ENV_PATH = path.join(__dirname, '.env');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const LOG_PATH = path.join(__dirname, 'activity.log');
+
+readEnvFile(ENV_PATH);
 
 const SUPABASE_PROJECT = 'nqwlrfckisarepakwaat';
 const SUPABASE_URL = `https://${SUPABASE_PROJECT}.supabase.co`;
@@ -129,26 +223,60 @@ function logErr(acc,tag,msg,e){
 function statePath(name){return path.join(__dirname,`state_${name.replace(/[^a-zA-Z0-9]/g,'_')}.json`)}
 
 function loadConfig(){
-  if(!fs.existsSync(CONFIG_PATH)){console.error(`\n  ${C.red}Config not found: ${CONFIG_PATH}${C.reset}\n`);process.exit(1)}
-  config=JSON.parse(fs.readFileSync(CONFIG_PATH,'utf-8'));
-  config.settings={...DEFAULTS,...(config.settings||{})};
+  const fileConfig = fs.existsSync(CONFIG_PATH)
+    ? JSON.parse(fs.readFileSync(CONFIG_PATH,'utf-8'))
+    : {};
+  const envConfig = normalizeEnvAuth('REAP_') || {};
+  const configWasLoadedFromEnv = Boolean(envConfig.auth || envConfig.accounts);
+  config = { ...fileConfig, ...envConfig };
 
-  // Support both single and multi-account config
+  const settingsFromEnv = {
+    autoJoinRounds: parseBooleanEnv('REAP_AUTO_JOIN_ROUNDS'),
+    joinBalanceThreshold: parseNumberEnv('REAP_JOIN_BALANCE_THRESHOLD'),
+    roundJoinCost: parseNumberEnv('REAP_ROUND_JOIN_COST'),
+    roundJoinStrategy: process.env.REAP_ROUND_JOIN_STRATEGY,
+    roundJoinChance: parseNumberEnv('REAP_ROUND_JOIN_CHANCE'),
+    roundJoinMinPerDay: parseNumberEnv('REAP_ROUND_JOIN_MIN_PER_DAY'),
+    roundJoinMaxPerDay: parseNumberEnv('REAP_ROUND_JOIN_MAX_PER_DAY'),
+    roundBurstSize: parseNumberEnv('REAP_ROUND_BURST_SIZE'),
+    roundBurstCooldownMs: parseNumberEnv('REAP_ROUND_BURST_COOLDOWN_MS'),
+    dripClaimBaseMs: parseNumberEnv('REAP_DRIP_CLAIM_BASE_MS'),
+    spectateBaseMs: parseNumberEnv('REAP_SPECTATE_BASE_MS'),
+    tokenRefreshBaseMs: parseNumberEnv('REAP_TOKEN_REFRESH_BASE_MS'),
+    mainLoopBaseMs: parseNumberEnv('REAP_MAIN_LOOP_BASE_MS'),
+    jitterPercent: parseNumberEnv('REAP_JITTER_PERCENT'),
+    minActionDelayMs: parseNumberEnv('REAP_MIN_ACTION_DELAY_MS'),
+    maxActionDelayMs: parseNumberEnv('REAP_MAX_ACTION_DELAY_MS'),
+    enableRandomIdle: parseBooleanEnv('REAP_ENABLE_RANDOM_IDLE'),
+    idleChance: parseNumberEnv('REAP_IDLE_CHANCE'),
+    longIdleChance: parseNumberEnv('REAP_LONG_IDLE_CHANCE'),
+    longIdleMinMs: parseNumberEnv('REAP_LONG_IDLE_MIN_MS'),
+    longIdleMaxMs: parseNumberEnv('REAP_LONG_IDLE_MAX_MS'),
+    rotateUserAgent: parseBooleanEnv('REAP_ROTATE_USER_AGENT'),
+    maxSpectateBonusPerDay: parseNumberEnv('REAP_MAX_SPECTATE_BONUS_PER_DAY'),
+    showDashboardEvery: parseNumberEnv('REAP_SHOW_DASHBOARD_EVERY'),
+    accountDelayMs: parseNumberEnv('REAP_ACCOUNT_DELAY_MS'),
+  };
+  const cleanEnvSettings = Object.fromEntries(Object.entries(settingsFromEnv).filter(([, value]) => value !== undefined && value !== ''));
+  config.settings = { ...DEFAULTS, ...(fileConfig.settings || {}), ...cleanEnvSettings };
+
   if(config.accounts&&Array.isArray(config.accounts)){
-    // Multi-account format
     accounts=config.accounts.map((a,i)=>{
+      if(!a || !a.auth) throw new Error(`Invalid account config at index ${i}`);
       const acc=newAccountState(a.name||`Account ${i+1}`,a.auth);
       acc.color=ACC_COLORS[i%ACC_COLORS.length];
       return acc;
     });
+    if(configWasLoadedFromEnv && fileConfig.accounts) {
+      config.accounts = fileConfig.accounts;
+    }
   }else if(config.auth){
-    // Single account (backward compatible)
     const name=config.auth.user?.user_metadata?.preferred_username||config.auth.user?.user_metadata?.name||'Main';
     const acc=newAccountState(name,config.auth);
     acc.color=ACC_COLORS[0];
     accounts=[acc];
   }else{
-    console.error(`\n  ${C.red}No auth config found${C.reset}\n`);process.exit(1);
+    console.error(`\n  ${C.red}No auth config found. Provide config.json or REAP_ACCESS_TOKEN / REAP_REFRESH_TOKEN env vars.${C.reset}\n`);process.exit(1);
   }
 }
 
@@ -170,7 +298,11 @@ function saveAccountState(acc){
   fs.writeFileSync(statePath(acc.name),JSON.stringify(s,null,2));
 }
 
-function saveConfig(){fs.writeFileSync(CONFIG_PATH,JSON.stringify(config,null,2))}
+function saveConfig(){
+  const hasConfigFile = fs.existsSync(CONFIG_PATH);
+  if(!hasConfigFile)return;
+  fs.writeFileSync(CONFIG_PATH,JSON.stringify(config,null,2));
+}
 
 // ─── HTTP ────────────────────────────────────────────────
 function buildCookies(acc){
