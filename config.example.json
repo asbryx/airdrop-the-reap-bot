@@ -1,0 +1,51 @@
+{
+  "_comment": "SINGLE ACCOUNT (backward compatible):",
+  "_single_example": {
+    "auth": {
+      "access_token": "eyJ...",
+      "refresh_token": "abc123",
+      "expires_at": 0,
+      "user": { "id": "your-user-id" }
+    }
+  },
+
+  "_comment2": "MULTI-ACCOUNT (use this format for multiple accounts):",
+  "accounts": [
+    {
+      "name": "Main",
+      "auth": {
+        "access_token": "PASTE_ACCESS_TOKEN_HERE",
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "expires_at": 0,
+        "refresh_token": "PASTE_REFRESH_TOKEN_HERE",
+        "user": { "id": "USER_ID_HERE" }
+      }
+    },
+    {
+      "name": "Alt1",
+      "auth": {
+        "access_token": "PASTE_ACCESS_TOKEN_HERE",
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "expires_at": 0,
+        "refresh_token": "PASTE_REFRESH_TOKEN_HERE",
+        "user": { "id": "USER_ID_HERE" }
+      }
+    }
+  ],
+
+  "settings": {
+    "autoJoinRounds": false,
+    "joinBalanceThreshold": 5000,
+    "roundJoinStrategy": "random",
+    "roundJoinChance": 0.3,
+    "roundJoinMaxPerDay": 8,
+    "jitterPercent": 35,
+    "enableRandomIdle": true,
+    "rotateUserAgent": true,
+    "accountDelayMs": 3000,
+    "maxSpectateBonusPerDay": 10,
+    "showDashboardEvery": 10
+  }
+}
